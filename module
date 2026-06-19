@@ -1,0 +1,375 @@
+import os
+import glob
+import json
+import time
+import base64
+import requests  # Dipakai di Modul 4 untuk mendownload gambar hasil AI lookbook
+from pathlib import Path
+from typing import List
+from pydantic import BaseModel, Field
+from openai import OpenAI
+
+# =====================================================================
+# CONFIGURATION & SETUP FOLDER
+# =====================================================================
+FOLDER_UTAMA = os.path.dirname(os.path.abspath(__file__))
+
+DIR_M1 = os.path.join(FOLDER_UTAMA, "modul1_json")
+DIR_M2 = os.path.join(FOLDER_UTAMA, "modul2_json")
+DIR_M3 = os.path.join(FOLDER_UTAMA, "modul3_json")
+DIR_M4 = os.path.join(FOLDER_UTAMA, "modul4_image")
+
+for folder in [DIR_M1, DIR_M2, DIR_M3, DIR_M4]:
+    os.makedirs(folder, exist_ok=True)
+
+# MASUKKAN OPENAI API KEY BERBAYAR ANDA DI SINI
+OPENAI_API_KEY = ""
+
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+# =====================================================================
+# PYDANTIC SCHEMAS (STRUCTURED OUTPUTS FOR OPENAI)
+# =====================================================================
+class UserFeatures(BaseModel):
+    gender: str = Field(description="Intended presentation style or gender expression of the outfit")
+    skin_tone: str = Field(description="General color palette context or neutral")
+    hairstyle: str = Field(description="Hair style presentation")
+    body_type_characteristics: str = Field(description="Overall outfit silhouette and fit characteristics")
+
+class CurrentOutfit(BaseModel):
+    style: str
+    color: str
+    material: str
+
+class OutfitAnalysis(BaseModel):
+    advantages: List[str] = Field(description="Must contain exactly 2 advantages")
+    areas_for_improvement: List[str] = Field(description="Must contain exactly 2 areas for improvement")
+
+class Module1Output(BaseModel):
+    user_features: UserFeatures
+    current_outfit: CurrentOutfit
+    analysis: OutfitAnalysis
+
+class WardrobeItemTags(BaseModel):
+    category: str = Field(description="e.g., shirt, pants, jacket, dress, skirt")
+    color: str = Field(description="Dominant color of the clothing")
+    material: str = Field(description="Estimated fabric material, e.g., cotton, denim, leather, wool")
+    style: str = Field(description="Fashion style type, e.g., casual, formal, sporty, slim-fit")
+
+# --- SKEMA OUTPUT MODUL 3 DENGAN METODE POLYMORPHISM ---
+# Skema standar untuk Kondisi 1 (Full Uploaded Wardrobe) & Kondisi 3 (Full Chosen by AI)
+class Module3StandardOutput(BaseModel):
+    category: str = Field(description="The matching fashion category style name, e.g., 'Casual', 'Business Casual'")
+    styling_advice: str = Field(description="A paragraph under 100 words explaining why this outfit flatters them.")
+    image_generation_prompt: str = Field(description="High-definition prompt for image generation in English.")
+
+# Skema khusus bersarang (nested) untuk Kondisi 2 (Katalog Web Uniqlo / H&M)
+class WebCatalogDetails(BaseModel):
+    selected_clothes: List[str] = Field(description="List of selected clothes from web stores like Uniqlo or H&M, e.g., 'Uniqlo: Open Collar Shirt'")
+    explanation: str = Field(description="A paragraph under 100 words explaining why this new outfit can flatter their shortcomings.")
+
+class Module3WebCatalogOutput(BaseModel):
+    category: str = Field(description="The matching fashion category style name, e.g., 'Casual', 'Formal'")
+    styling_advice: WebCatalogDetails = Field(description="Structured object containing selected clothes array and text explanation.")
+    image_generation_prompt: str = Field(description="High-definition prompt for image generation in English.")
+
+# =====================================================================
+# HELPER FUNCTIONS
+# =====================================================================
+def cari_semua_gambar(pola_nama_depan: str) -> List[str]:
+    ekstensi_populer = ['jpg', 'jpeg', 'png', 'webp', 'JPG', 'PNG', 'JPEG']
+    daftar_file = []
+    for ext in ekstensi_populer:
+        pola = os.path.join(FOLDER_UTAMA, f"{pola_nama_depan}*.{ext}")
+        daftar_file.extend(glob.glob(pola))
+    return sorted(list(set(daftar_file)))
+
+def encode_image_to_base64(image_path: str) -> str:
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+# =====================================================================
+# CORE MODULES LOGIC
+# =====================================================================
+def run_module_1_vision_analysis(image_path: str) -> Module1Output:
+    print("\n--- Running Module 1: OpenAI Vision Analysis Agent ---")
+    base64_image = encode_image_to_base64(image_path)
+    
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            completion = openai_client.beta.chat.completions.parse(
+                model="gpt-5.5",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "You are an expert fashion consultant. Analyze the person in the photo. Identify their body shape, skin tone, and details of the current outfit."},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        ]
+                    }
+                ],
+                response_format=Module1Output,
+                temperature=1
+            )
+            return completion.choices[0].message.parsed
+        except Exception as e:
+            if attempt < max_retries:
+                time.sleep(2)
+            else:
+                raise e
+
+def run_module_2_wardrobe_tagging(image_path: str) -> WardrobeItemTags:
+    print(f"-> Tagging Agent mendeteksi item via OpenAI ...")
+    base64_image = encode_image_to_base64(image_path)
+    
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            completion = openai_client.beta.chat.completions.parse(
+                model="gpt-5.5",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Analyze this clothing item image. Output the attributes strictly based on what is visible."},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        ]
+                    }
+                ],
+                response_format=WardrobeItemTags,
+                temperature=1
+            )
+            return completion.choices[0].message.parsed
+        except Exception as e:
+            if attempt < max_retries:
+                time.sleep(2)
+            else:
+                raise e
+
+def run_module_3_stylist_agent_v3(path_model_1_json: str, list_baju_data: List[dict], condition_type: str = "3", chosen_style: str = "any"):
+    """
+    Logika Modul 3 dengan 3 kondisi sesuai PPT & Sinkronisasi Prompt Eksperimen Gemini:
+    1 = Full Uploaded Wardrobe (Menggunakan data baju terstruktur hasil Modul 2 dari Firebase)
+    2 = Full Chosen by AI from Web Catalog Wardrobe (Uniqlo/H&M)
+    3 = Full Chosen by AI (Bebas / Generative)
+    """
+    print(f"\n--- Running Module 3: OpenAI Stylist Agent  [CONDITION MODE {condition_type}] ---")
+    
+    with open(path_model_1_json, "r", encoding="utf-8") as f:
+        data_m1 = json.load(f)
+
+    # Menyiapkan variabel pembantu untuk disuntikkan ke prompt utama
+    user_features_context = json.dumps(data_m1.get('user_features', {}))
+    analysis_context = json.dumps(data_m1.get('analysis', {}))
+
+    # 🛠️ PEMBARUAN PROMPT & CONSTRAINT BERDASARKAN HASIL EKSPERIMEN SUKSES DI PPT
+    if condition_type == "1":
+        response_schema_target = Module3StandardOutput
+        constraint_instruction = """
+        Constraints: You MUST ONLY use and assemble the clothing items provided in the 'Selected Wardrobe Inventory Items' list below. 
+        These items are high-accuracy digital tags extracted directly by Module 2 (Wardrobe Tagging Agent). 
+        DO NOT invent, introduce, or add any entirely new garments, jackets, shirts, or pants that are not present in this provided list. 
+        The final recommended outfit must strictly consist of these verified wardrobe items.
+        """
+        task_instruction = "Task: Write a paragraph under 100 words in 'styling_advice' explaining to the user why this specific combination from their stored Module 2 wardrobe items flatters their body shape shortcomings."
+
+    elif condition_type == "2":
+        # Kondisi 2: Sinkronisasi Prompt Utama dari Slide PPT "New outfit choose from web wardrobe by AI"
+        response_schema_target = Module3WebCatalogOutput
+        constraint_instruction = f"""
+        Using user_features and analysis, Please design a brand new outfit for the user based on their physical features and outfit shortcomings. 
+        Constraints: You must select clothes from wardrobe web store like Uniqlo or H&M.
+        CRITICAL STYLE REQUIREMENT: Align the look with the '{chosen_style.upper()}' fashion theme.
+        """
+        task_instruction = f"""
+        Task 1: Inside 'styling_advice.selected_clothes', make a list of selected clothes from web stores like Uniqlo or H&M (including specific colors and fabrics, e.g., 'Uniqlo: Smart Ankle Pants (Black)').
+        Task 2: Inside 'styling_advice.explanation', write a paragraph under 100 words explaining to the user why this new outfit can flatter their shortcomings.
+        Task 3: Combine the 'user's physical features' with the details of the new outfit you designed to write a high-definition image generation prompt for an AI image generation stored in 'image_generation_prompt'. The description must be extremely specific (including lighting, posture, clothing materials, and a clean studio background).
+        """
+
+    else:
+        # Kondisi 3: Sinkronisasi Prompt Utama dari Slide PPT "New outfit choose by AI"
+        response_schema_target = Module3StandardOutput
+        constraint_instruction = f"""
+        Using user_features and analysis, Please design a brand new outfit for the user based on their physical features and outfit shortcomings.
+        CRITICAL STYLE REQUIREMENT: Align the look with the '{chosen_style.upper()}' fashion theme.
+        """
+        task_instruction = f"""
+        Task 1: Inside 'styling_advice', write a paragraph under 100 words explaining to the user why this new outfit can flatter their shortcomings.
+        Task 2: Combine the 'user's physical features' with the details of the new outfit you designed to write a high-definition image generation prompt for an AI image generation stored in 'image_generation_prompt'. The description must be extremely specific (including lighting, posture, clothing materials, and a clean studio background).
+        """
+
+    # Menggabungkan seluruh komponen menjadi satu kesatuan prompt formal gpt-5.5
+    context_prompt = f"""
+    You are a top-tier personal fashion stylist director. 
+    
+    [User Profile Context]
+    User Features: {user_features_context}
+    Outfit Analysis & Shortcomings: {analysis_context}
+    
+    [Core Directives & Constraints]
+    {constraint_instruction}
+    
+    [Selected Wardrobe Inventory Items (Only applicable for Condition 1)]
+    { json.dumps(list_baju_data, indent=2) }
+    
+    [Required Action Tasks]
+    {task_instruction}
+
+    CRITICAL CONSTRAINTS FOR IMAGE PROMPT:
+    - CLOTHING LAYERING: Describe the complete outfit cleanly. Avoid phrases like "wearing only", "nothing else", "naked", or "bare". If a jacket is open, describe it as "A casual khaki jacket layered loosely over a matching minimal silhouette" to prevent safety filter triggers.
+    - CAMERA COMPOSITION: A full-body shot captured from a medium-long distance. Head to toe fully visible. No cropping allowed.
+    - BACKGROUND CONSTRAINT: Focus the background strictly on a SOLID PURE WHITE back-drop, with absolutely NO studio props or gradients.
+    """
+    
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            completion = openai_client.beta.chat.completions.parse(
+                model="gpt-5.5",
+                messages=[{"role": "user", "content": context_prompt}],
+                response_format=response_schema_target,
+                temperature=1
+            )
+            return completion.choices[0].message.parsed
+        except Exception as e:
+            if attempt < max_retries:
+                time.sleep(2)
+            else:
+                raise e
+    
+def run_module_4_free_image_generator(input_json_path: str, output_folder: str):
+    print("\n--- Running Module 4: OpenAI Image Generator Agent (gpt-image-2) ---")
+    
+    with open(input_json_path, "r", encoding="utf-8") as f:
+        data_m3 = json.load(f)
+        
+    raw_prompt = data_m3.get("image_generation_prompt")
+    if not raw_prompt:
+        raise ValueError("Tidak menemukan kunci 'image_generation_prompt' di JSON.") 
+    print(f"[DEBUG] Prompt Kreatif: {raw_prompt}")
+    path_simpan_gambar = os.path.join(output_folder, "rekomendasi_outfit_visual.png")
+    
+    try:
+        # Tembak API OpenAI tanpa parameter tambahan agar server memberikan respon default
+        response = openai_client.images.generate(
+            model="gpt-image-2",
+            prompt=raw_prompt,
+            size="1024x1024",
+            quality="low"  # Mengunci tarif hemat low-budget tier 
+        )
+        
+        # 🛡️ STRATEGI DEFENSIF MULTI-FORMAT (ANTI-NONE KUNCI UTAMA 🔑)
+        dalle_url = getattr(response.data[0], 'url', None)
+        dalle_b64 = getattr(response.data[0], 'b64_json', None)
+        
+        # JALUR 1: Jika server mengembalikan URL Web biasa 
+        if dalle_url and dalle_url != "None":
+            print(f"[DEBUG] Jalur URL Aktif. Mengunduh gambar dari server OpenAI...") 
+            img_data = requests.get(dalle_url).content 
+            with open(path_simpan_gambar, "wb") as f:
+                f.write(img_data) 
+            print(f"✅ Sukses! Gambar rekomendasi gpt-image-2 disimpan via URL di: {path_simpan_gambar}") 
+            
+        # JALUR 2: Jika server ternyata diam-diam mengembalikan format Base64 (Bypass URL None)
+        elif dalle_b64:
+            print(f"[DEBUG] Jalur Base64 Aktif. Mendekode string biner langsung...")
+            img_bytes = base64.b64decode(dalle_b64)
+            with open(path_simpan_gambar, "wb") as f:
+                f.write(img_bytes)
+            print(f"✅ Sukses! Gambar rekomendasi gpt-image-2 disimpan via Base64 di: {path_simpan_gambar}")
+            
+        else:
+            # JALUR 3: Jika keduanya kosong, cetak isi payload respon asli untuk inspeksi dosen/kamu
+            print("❌ Gagal: Respon dari OpenAI tidak mengandung URL maupun Base64.")
+            print(f"[DEBUG RESPONS ASLI SERVER]: {response}")
+            
+    except Exception as err:
+        print(f"❌ Gagal mengambil gambar dari OpenAI. Detail: {err}")
+
+# =====================================================================
+# BLOK TESTING UTAMA LOKAL (DENGAN LOGIKA BYPASS MODUL 2)
+# =====================================================================
+if __name__ == "__main__":
+    print("=== STARTING FULL END-TO-END LOCAL TESTING ===")
+    
+    # 1. ATUR KONDISI YANG INGIN DIUJI DI SINI (Ubah ke "1", "2", atau "3")
+    # ------------------------------------------------------------------
+    TEST_CONDITION = "1"  # <--- GANTI DI SINI UNTUK TEST KONDISI LAIN
+    TEST_STYLE = "casual" # <--- GANTI TEMA STYLE DI SINI
+    # ------------------------------------------------------------------
+
+    # Cari file gambar profil user
+    file_user_list = cari_semua_gambar('user')
+    
+    if file_user_list:
+        file_result_m1 = os.path.join(DIR_M1, "Model_1_result.json")
+        file_result_m3 = os.path.join(DIR_M3, "Model_3_result.json")
+        
+        try:
+            # ==== EKSEKUSI MODUL 1 (Analisis Tubuh - Selalu Berjalan) ====
+            m1_out = run_module_1_vision_analysis(file_user_list[0])
+            with open(file_result_m1, "w", encoding="utf-8") as f:
+                f.write(m1_out.model_dump_json(indent=4))
+            print("✅ Sukses memproses pengujian lokal Modul 1.")
+            
+            # ==== LOGIKA PENYARINGAN MODUL 2 (WARDROBE TAGGING) ====
+            real_wardrobe_inventory = []
+            
+            # Modul 2 HANYA akan bekerja jika kondisi adalah "1"
+            if TEST_CONDITION == "1":
+                print(f"\n[INFO] Mode Kondisi 1 Terdeteksi. Menyiapkan Modul 2...")
+                file_baju_list = cari_semua_gambar('baju')
+                
+                if file_baju_list:
+                    # Bersihkan folder hasil modul 2 lama
+                    for old_json in glob.glob(os.path.join(DIR_M2, "*.json")):
+                        os.remove(old_json)
+                    
+                    for idx, path_baju in enumerate(file_baju_list, start=1):
+                        baju_tags = run_module_2_wardrobe_tagging(path_baju)
+                        real_wardrobe_inventory.append(baju_tags.model_dump())
+                        
+                        output_file_baju = os.path.join(DIR_M2, f"baju_lokal_{idx}.json")
+                        with open(output_file_baju, "w", encoding="utf-8") as f:
+                            f.write(baju_tags.model_dump_json(indent=4))
+                    print("✅ Sukses memproses pengujian lokal Modul 2.")
+                else:
+                    print("⚠️ [Warning] Tidak ada file 'baju.jpg', menggunakan data tiruan (Mock Data).")
+                    real_wardrobe_inventory = [
+                        {"category": "jacket", "color": "black", "material": "leather", "style": "casual"}
+                    ]
+            else:
+                # BYPASS: Modul 2 tidak akan dipanggil sama sekali jika TEST_CONDITION adalah "2" atau "3"
+                print(f"\n⏩ [BYPASS] Melewati Modul 2 karena menggunakan Kondisi {TEST_CONDITION}.")
+                print("   (Data lemari baju tidak diperlukan untuk skenario ini).")
+                real_wardrobe_inventory = [] # Biarkan kosong agar aman saat masuk ke Modul 3
+            
+            # ==== EKSEKUSI MODUL 3 (Stylist Agent) ====
+            m3_out = run_module_3_stylist_agent_v3(
+                path_model_1_json=file_result_m1, 
+                list_baju_data=real_wardrobe_inventory, 
+                condition_type=TEST_CONDITION, 
+                chosen_style=TEST_STYLE
+            )
+            
+            # Menyimpan hasil modul 3
+            with open(file_result_m3, "w", encoding="utf-8") as f:
+                if hasattr(m3_out, 'model_dump_json'):
+                    f.write(m3_out.model_dump_json(indent=4))
+                else:
+                    # Menggunakan normalisasi payload agar teks daftar baju web catalog menyatu
+                    f.write(json.dumps(m3_out, indent=4))
+            print(f"✅ Sukses memproses pengujian lokal Modul 3 (Mode {TEST_CONDITION}).")
+            
+            # ==== EKSEKUSI MODUL 4 (Image Generator) ====
+            run_module_4_free_image_generator(file_result_m3, DIR_M4)
+            print(f"\n🎉 [SUKSES TOTAL] Pipeline Kondisi {TEST_CONDITION} berhasil dijalankan!")
+            
+        except Exception as err:
+            import traceback
+            traceback.print_exc()
+            print(f"❌ Gagal di tengah pengujian lokal: {err}")
+    else:
+        print("💡 [Petunjuk] Letakkan 1 foto profil dengan nama 'user.jpg' untuk memulai.")
