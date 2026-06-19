@@ -1,0 +1,23 @@
+{
+    "user_features": {
+        "gender": "Feminine presentation.",
+        "skin_tone": "Light to light-medium skin tone with a neutral-to-warm overall palette context.",
+        "hairstyle": "Short wavy bob with bangs, dark burgundy-brown tone.",
+        "body_type_characteristics": "Slim-to-average build with a relatively straight silhouette; shoulders and hips appear fairly balanced, with a lightly defined waist enhanced by the high-waisted skirt."
+    },
+    "current_outfit": {
+        "style": "Minimal, feminine, casual-chic summer styling with a soft monochrome base and modern contrast accessories.",
+        "color": "Predominantly white/cream with black accents from the shoulder bag and shoes.",
+        "material": "Lightweight ribbed or knit sleeveless top paired with a sheer, textured, layered skirt; leather or faux-leather bag and glossy black-and-white shoes."
+    },
+    "analysis": {
+        "advantages": [
+            "The monochrome white palette creates a clean, airy vertical line that visually elongates the frame.",
+            "The fitted sleeveless top balances well with the softer, flowing skirt, giving the outfit a polished feminine silhouette."
+        ],
+        "areas_for_improvement": [
+            "The waistband and skirt volume could be slightly more defined to emphasize the waist and avoid the lower half looking too loose.",
+            "The black shoulder bag and shoes add contrast, but coordinating one more dark accessory or choosing softer-toned footwear could make the look feel more cohesive."
+        ]
+    }
+}
